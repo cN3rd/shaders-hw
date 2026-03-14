@@ -1,11 +1,20 @@
 #pragma kernel CSMain
 
+struct TriangleData
+{
+    float3 offset;
+    float3 velocity;
+    float  lifetime;
+    float  scale;
+};
+
 // Flat (unindexed) source positions: vertex i belongs to triangle i/3
-StructuredBuffer<float3> _SourcePositions;
-RWByteAddressBuffer      _Vertices;
+StructuredBuffer<float3>          _SourcePositions;
+RWByteAddressBuffer               _Vertices;
+RWStructuredBuffer<TriangleData>  _TriangleBuffer;
 
 int   _VertexStride; // stride in floats
-float _SceneTime;
+float _DeltaTime;
 float4x4 _ObjectToWorld;
 float4x4 _WorldToObject;
 
@@ -17,27 +26,42 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     uint v1 = tri * 3u + 1u;
     uint v2 = tri * 3u + 2u;
 
+    TriangleData td = _TriangleBuffer[tri];
+
+    // --- Simulate ---
+    if (td.lifetime > 0.0)
+    {
+        td.velocity += float3(0.0, -12.0, 0.0) * _DeltaTime;
+        td.offset   += td.velocity * _DeltaTime;
+        td.lifetime -= _DeltaTime;
+        td.scale     = saturate(td.lifetime / 0.3);
+    }
+    else
+    {
+        td.scale = 0.0;
+    }
+    _TriangleBuffer[tri] = td;
+
+    // --- Write displaced vertices ---
     float3 p0 = _SourcePositions[v0];
     float3 p1 = _SourcePositions[v1];
     float3 p2 = _SourcePositions[v2];
 
-    // Transform to world space to match the geometric shader
+    // Transform to world space
     float3 w0 = mul(_ObjectToWorld, float4(p0, 1.0)).xyz;
     float3 w1 = mul(_ObjectToWorld, float4(p1, 1.0)).xyz;
     float3 w2 = mul(_ObjectToWorld, float4(p2, 1.0)).xyz;
 
-    // Face normal in world space
-    float3 faceNormal = normalize(cross(w1 - w0, w2 - w0));
+    // Scale around centroid, then apply offset
+    float3 center = (w0 + w1 + w2) / 3.0;
+    w0 = center + (w0 - center) * td.scale + td.offset;
+    w1 = center + (w1 - center) * td.scale + td.offset;
+    w2 = center + (w2 - center) * td.scale + td.offset;
 
-    // Ease-out burst + gravity — matches the geometric shader
-    float t     = _SceneTime;
-    float burst = t * (2.0 - t);
-    float3 offset = faceNormal * burst * 4.0 + float3(0.0, -1.0, 0.0) * t * t * 3.0;
-
-    // Apply offset in world space, then transform back to object space
-    float3 r0 = mul(_WorldToObject, float4(w0 + offset, 1.0)).xyz;
-    float3 r1 = mul(_WorldToObject, float4(w1 + offset, 1.0)).xyz;
-    float3 r2 = mul(_WorldToObject, float4(w2 + offset, 1.0)).xyz;
+    // Transform back to object space for vertex buffer
+    float3 r0 = mul(_WorldToObject, float4(w0, 1.0)).xyz;
+    float3 r1 = mul(_WorldToObject, float4(w1, 1.0)).xyz;
+    float3 r2 = mul(_WorldToObject, float4(w2, 1.0)).xyz;
 
     uint stride = (uint)_VertexStride * 4u;
     _Vertices.Store3(v0 * stride, asuint(r0));
