@@ -1,14 +1,46 @@
-// Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel CSMain
 
-// Create a RenderTexture with enableRandomWrite flag and set it
-// with cs.SetTexture
-RWTexture2D<float4> Result;
+// Flat (unindexed) source positions: vertex i belongs to triangle i/3
+StructuredBuffer<float3> _SourcePositions;
+RWByteAddressBuffer      _Vertices;
 
-[numthreads(8,8,1)]
-void CSMain (uint3 id : SV_DispatchThreadID)
+int   _VertexStride; // stride in floats
+float _SceneTime;
+float4x4 _ObjectToWorld;
+float4x4 _WorldToObject;
+
+[numthreads(64, 1, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID)
 {
-    // TODO: insert actual code here!
+    uint tri = id.x;
+    uint v0 = tri * 3u;
+    uint v1 = tri * 3u + 1u;
+    uint v2 = tri * 3u + 2u;
 
-    Result[id.xy] = float4(id.x & id.y, (id.x & 15)/15.0, (id.y & 15)/15.0, 0.0);
+    float3 p0 = _SourcePositions[v0];
+    float3 p1 = _SourcePositions[v1];
+    float3 p2 = _SourcePositions[v2];
+
+    // Transform to world space to match the geometric shader
+    float3 w0 = mul(_ObjectToWorld, float4(p0, 1.0)).xyz;
+    float3 w1 = mul(_ObjectToWorld, float4(p1, 1.0)).xyz;
+    float3 w2 = mul(_ObjectToWorld, float4(p2, 1.0)).xyz;
+
+    // Face normal in world space
+    float3 faceNormal = normalize(cross(w1 - w0, w2 - w0));
+
+    // Ease-out burst + gravity — matches the geometric shader
+    float t     = _SceneTime;
+    float burst = t * (2.0 - t);
+    float3 offset = faceNormal * burst * 4.0 + float3(0.0, -1.0, 0.0) * t * t * 3.0;
+
+    // Apply offset in world space, then transform back to object space
+    float3 r0 = mul(_WorldToObject, float4(w0 + offset, 1.0)).xyz;
+    float3 r1 = mul(_WorldToObject, float4(w1 + offset, 1.0)).xyz;
+    float3 r2 = mul(_WorldToObject, float4(w2 + offset, 1.0)).xyz;
+
+    uint stride = (uint)_VertexStride * 4u;
+    _Vertices.Store3(v0 * stride, asuint(r0));
+    _Vertices.Store3(v1 * stride, asuint(r1));
+    _Vertices.Store3(v2 * stride, asuint(r2));
 }
