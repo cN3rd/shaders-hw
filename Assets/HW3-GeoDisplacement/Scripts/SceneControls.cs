@@ -129,7 +129,7 @@ public class SceneControls : MonoBehaviour
         {
             _lastFiredTime = elapsedTime;
             _lastFiredSeed = currentSeed;
-            OnTimeOrSeedChanged?.Invoke(elapsedTime, currentSeed);
+            OnTimeOrSeedChanged?.Invoke(elapsedTime / duration, currentSeed);
         }
     }
 }
